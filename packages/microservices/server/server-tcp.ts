@@ -10,6 +10,8 @@ import {
   TCP_DEFAULT_HOST,
   TCP_DEFAULT_PORT,
 } from '../constants';
+import { TcpContext } from '../ctx-host/tcp.context';
+import { Transport } from '../enums';
 import { JsonSocket } from '../helpers/json-socket';
 import {
   CustomTransportStrategy,
@@ -22,9 +24,10 @@ import { TcpOptions } from '../interfaces/microservice-configuration.interface';
 import { Server } from './server';
 
 export class ServerTCP extends Server implements CustomTransportStrategy {
+  public readonly transportId = Transport.TCP;
+
   private readonly port: number;
   private readonly host: string;
-
   private server: NetSocket;
   private isExplicitlyTerminated = false;
   private retryAttemptsCount = 0;
@@ -62,8 +65,9 @@ export class ServerTCP extends Server implements CustomTransportStrategy {
       ? JSON.stringify(packet.pattern)
       : packet.pattern;
 
+    const tcpContext = new TcpContext([socket, pattern]);
     if (isUndefined((packet as IncomingRequest).id)) {
-      return this.handleEvent(pattern, packet);
+      return this.handleEvent(pattern, packet, tcpContext);
     }
     const handler = this.getHandlerByPattern(pattern);
     if (!handler) {
@@ -76,14 +80,15 @@ export class ServerTCP extends Server implements CustomTransportStrategy {
       return socket.sendMessage(noHandlerPacket);
     }
     const response$ = this.transformToObservable(
-      await handler(packet.data),
+      await handler(packet.data, tcpContext),
     ) as Observable<any>;
 
     response$ &&
       this.send(response$, data => {
         Object.assign(data, { id: (packet as IncomingRequest).id });
-        const outgoingResponse = this.serializer.serialize(data as WritePacket &
-          PacketId);
+        const outgoingResponse = this.serializer.serialize(
+          data as WritePacket & PacketId,
+        );
         socket.sendMessage(outgoingResponse);
       });
   }

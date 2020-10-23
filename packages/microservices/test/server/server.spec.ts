@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import { Observable, of, throwError as _throw } from 'rxjs';
 import * as sinon from 'sinon';
 import { Server } from '../../server/server';
-import * as Utils from '../../utils';
 
 class TestServer extends Server {
   public listen(callback: () => void) {}
@@ -28,8 +27,8 @@ describe('Server', () => {
         (server as any).messageHandlers,
         'set',
       );
-      const msvcUtilTransformPatternToRouteStub = sinon
-        .stub(Utils, 'transformPatternToRoute')
+      const normalizePatternStub = sinon
+        .stub(server as any, 'normalizePattern')
         .returns(handlerRoute);
 
       server.addHandler(pattern, callback as any);
@@ -38,32 +37,28 @@ describe('Server', () => {
       expect(messageHandlersSetSpy.args[0][0]).to.be.equal(handlerRoute);
       expect(messageHandlersSetSpy.args[0][1]).to.be.equal(callback);
 
-      msvcUtilTransformPatternToRouteStub.restore();
+      normalizePatternStub.restore();
     });
   });
 
   describe('getRouteFromPattern', () => {
-    let msvcUtilTransformPatternToRouteStub: sinon.SinonSpy;
+    let normalizePatternStub: sinon.SinonStub;
 
     beforeEach(() => {
-      msvcUtilTransformPatternToRouteStub = sinon.spy(
-        Utils,
-        'transformPatternToRoute',
-      );
+      normalizePatternStub = sinon.stub(server as any, 'normalizePattern');
     });
 
     afterEach(() => {
-      msvcUtilTransformPatternToRouteStub.restore();
+      normalizePatternStub.restore();
     });
 
     describe(`when gets 'string' pattern`, () => {
       it(`should call 'transformPatternToRoute' with 'string' argument`, () => {
         const inputServerPattern = 'hello';
         const transformedServerPattern = inputServerPattern;
-
         (server as any).getRouteFromPattern(inputServerPattern);
 
-        expect(msvcUtilTransformPatternToRouteStub.args[0][0]).to.be.equal(
+        expect(normalizePatternStub.args[0][0]).to.be.equal(
           transformedServerPattern,
         );
       });
@@ -76,10 +71,9 @@ describe('Server', () => {
           controller: 'app',
           use: 'getHello',
         };
-
         (server as any).getRouteFromPattern(inputServerPattern);
 
-        expect(msvcUtilTransformPatternToRouteStub.args[0][0]).to.be.deep.equal(
+        expect(normalizePatternStub.args[0][0]).to.be.deep.equal(
           transformedServerPattern,
         );
       });
@@ -105,7 +99,6 @@ describe('Server', () => {
             expect(
               sendSpy.calledWith({
                 err: 'test',
-                response: null,
                 isDisposed: true,
               }),
             ).to.be.true;
@@ -120,7 +113,6 @@ describe('Server', () => {
           process.nextTick(() => {
             expect(
               sendSpy.calledWith({
-                err: null,
                 response: 'test',
                 isDisposed: true,
               }),

@@ -7,7 +7,8 @@ import {
   KAFKA_DEFAULT_GROUP,
   NO_MESSAGE_HANDLER,
 } from '../constants';
-import { KafkaHeaders } from '../enums';
+import { KafkaContext } from '../ctx-host';
+import { KafkaHeaders, Transport } from '../enums';
 import {
   Consumer,
   ConsumerConfig,
@@ -30,13 +31,16 @@ import { Server } from './server';
 let kafkaPackage: any = {};
 
 export class ServerKafka extends Server implements CustomTransportStrategy {
-  protected readonly logger = new Logger(ServerKafka.name);
+  public readonly transportId = Transport.KAFKA;
+
+  protected logger = new Logger(ServerKafka.name);
   protected client: Kafka = null;
   protected consumer: Consumer = null;
   protected producer: Producer = null;
-  private readonly brokers: string[];
-  private readonly clientId: string;
-  private readonly groupId: string;
+
+  protected brokers: string[];
+  protected clientId: string;
+  protected groupId: string;
 
   constructor(private readonly options: KafkaOptions['options']) {
     super();
@@ -89,20 +93,23 @@ export class ServerKafka extends Server implements CustomTransportStrategy {
   }
 
   public createClient<T = any>(): T {
-    return new kafkaPackage.Kafka(Object.assign(this.options.client || {}, {
-      clientId: this.clientId,
-      brokers: this.brokers,
-      logCreator: KafkaLogger.bind(null, this.logger),
-    }) as KafkaConfig);
+    return new kafkaPackage.Kafka(
+      Object.assign(this.options.client || {}, {
+        clientId: this.clientId,
+        brokers: this.brokers,
+        logCreator: KafkaLogger.bind(null, this.logger),
+      }) as KafkaConfig,
+    );
   }
 
   public async bindEvents(consumer: Consumer) {
     const registeredPatterns = [...this.messageHandlers.keys()];
+    const consumerSubscribeOptions = this.options.subscribe || {};
     const subscribeToPattern = async (pattern: string) =>
       consumer.subscribe({
         topic: pattern,
+        ...consumerSubscribeOptions,
       });
-
     await Promise.all(registeredPatterns.map(subscribeToPattern));
 
     const consumerRunOptions = Object.assign(this.options.run || {}, {
@@ -111,7 +118,7 @@ export class ServerKafka extends Server implements CustomTransportStrategy {
     await consumer.run(consumerRunOptions);
   }
 
-  public getMessageHandler(): Function {
+  public getMessageHandler() {
     return async (payload: EachMessagePayload) => this.handleMessage(payload);
   }
 
@@ -138,11 +145,15 @@ export class ServerKafka extends Server implements CustomTransportStrategy {
     const replyPartition = headers[KafkaHeaders.REPLY_PARTITION];
 
     const packet = this.deserializer.deserialize(rawMessage, { channel });
-
+    const kafkaContext = new KafkaContext([
+      rawMessage,
+      payload.partition,
+      payload.topic,
+    ]);
     // if the correlation id or reply topic is not set
     // then this is an event (events could still have correlation id)
     if (!correlationId || !replyTopic) {
-      return this.handleEvent(packet.pattern, packet);
+      return this.handleEvent(packet.pattern, packet, kafkaContext);
     }
 
     const publish = this.getPublisher(
@@ -159,7 +170,7 @@ export class ServerKafka extends Server implements CustomTransportStrategy {
     }
 
     const response$ = this.transformToObservable(
-      await handler(packet.data),
+      await handler(packet.data, kafkaContext),
     ) as Observable<any>;
     response$ && this.send(response$, publish);
   }
